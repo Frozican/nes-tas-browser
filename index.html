@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#10131b">
+<title>NES TAS – Browser Emulator</title>
+<script src="https://unpkg.com/jsnes@2/dist/jsnes.min.js"></script>
+<style>
+:root{color-scheme:dark;--bg:#10131b;--panel:#191e29;--line:#303849;--text:#eef2f8;--muted:#9ba8bc;--blue:#2785f5;--cell:#252d3b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,-apple-system,Segoe UI,sans-serif}
+header{padding:14px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#10131bf2;z-index:5}
+h1{font-size:19px;margin:0}.sub{font-size:12px;color:var(--muted);margin-top:3px}
+main{max-width:1000px;margin:auto;padding:12px;display:grid;gap:12px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;min-width:0}
+.panel h2{font-size:15px;margin:0 0 10px}.screen{width:100%;max-width:512px;display:block;margin:auto;background:#05070b;image-rendering:pixelated;aspect-ratio:256/240}
+.status{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:10px 0;color:var(--muted);font-size:13px;flex-wrap:wrap}
+.controls{display:flex;gap:7px;flex-wrap:wrap}button,.filebutton{background:#293346;border:1px solid #3c4960;color:var(--text);border-radius:10px;padding:9px 11px;font:inherit;min-height:40px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+button.primary{background:var(--blue);border-color:var(--blue);color:white}button:disabled{opacity:.45;cursor:not-allowed}input[type=file]{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.note{font-size:12px;color:var(--muted);margin-top:8px}.status-good{color:#70e0a0}.status-bad{color:#ff9a9a}
+.timeline-wrap{overflow:auto;max-height:60vh;border:1px solid var(--line);border-radius:10px;overscroll-behavior:contain}
+.timeline-head,.frame-row{display:grid;grid-template-columns:54px repeat(8,minmax(32px,1fr));gap:3px;min-width:340px;padding:4px;background:var(--panel)}
+.timeline-head{position:sticky;top:0;z-index:2;border-bottom:1px solid var(--line)}.timeline-head span{font-size:12px;color:var(--muted);text-align:center;padding:5px 0}
+.frame-row{border-bottom:1px solid #242b37}.frame-row.current{outline:2px solid var(--blue);outline-offset:-2px}
+.frame-num{border:0;background:transparent;min-height:32px;padding:3px 1px;color:var(--muted);font-size:12px}.cell{padding:0;min-height:32px;background:var(--cell);border:1px solid #354054;border-radius:6px}
+.cell.on{background:var(--blue);border-color:#65aaff}.footer{font-size:12px;color:var(--muted)}
+.ram-row{display:grid;grid-template-columns:76px 1fr auto auto;gap:8px;align-items:center;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
+.ram-address{font-family:ui-monospace,monospace;font-size:13px;color:#a8c7ff}
+.ram-value{font-family:ui-monospace,monospace;font-size:14px;font-weight:700}
+.ram-dec{font-size:12px;color:var(--muted)}
+.ram-remove{min-height:30px;padding:4px 8px}
+.small-field,.range-controls label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
+.small-field input,.range-controls input,.range-controls select{width:100%;min-width:0;min-height:40px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:8px;font:inherit}
+.range-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+@media(max-width:420px){.range-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.range-controls label:last-child{grid-column:1/-1}}
+@media(min-width:760px){main{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}.game{grid-column:1}.timeline{grid-column:2;grid-row:1 / span 2}.timeline-wrap{max-height:75vh}}
+</style>
+</head>
+<body>
+<header><h1>🎮 NES TAS</h1><div class="sub">JSNES Emulator · Vertical Frame Timeline · Browser</div></header>
+<main>
+<section class="panel game">
+<h2>NES Game</h2>
+<label class="filebutton" for="romFile">📂 Load your .nes ROM</label>
+<input id="romFile" type="file" accept=".nes,application/octet-stream">
+<canvas id="screen" class="screen" width="256" height="240" aria-label="NES game screen"></canvas>
+<div class="status"><span id="engineStatus">Loading emulator library …</span><strong id="frameLabel">Frame 0</strong></div>
+<div class="controls">
+<button id="prev" title="Step back one frame">−1 Frame</button><button id="prev10" title="Step back 10 frames">−10 Frames</button><button id="play" class="primary">▶ Play</button><button id="next" title="Advance one frame">+1 Frame</button><button id="next10" title="Advance 10 frames">+10 Frames</button><button id="reset">↺ Reset</button>
+<button id="colorMode">Colors: Standard</button>
+</div>
+<div class="controls" style="margin-top:7px">
+<label class="small-field">Jump to frame <input id="jumpFrame" type="number" min="0" value="0" inputmode="numeric"></label>
+<button id="jumpButton">Go</button>
+</div>
+<div class="controls" style="margin-top:7px">
+<button id="saveState">Save State</button><button id="loadState">Load State</button><button id="replay">Play TAS from Frame 0</button>
+</div>
+<div class="note">Emulation runs directly in your browser. ROM files are read locally and are not uploaded. The JSNES library is loaded from a CDN when you open the page.</div>
+</section>
+<section class="panel timeline">
+<h2>Vertical Piano Roll</h2>
+<div class="controls" style="margin-bottom:10px">
+<button id="addRows"> +60 Frames</button><button id="saveTas">Export TAS</button><label class="filebutton" for="tasFile">Import TAS</label><input id="tasFile" type="file" accept=".json,application/json">
+</div>
+<div class="timeline-wrap" id="timelineWrap">
+<div class="timeline-head"><span>Frame</span><span>←</span><span>→</span><span>↓</span><span>↑</span><span>B</span><span>A</span><span>Sel</span><span>Start</span></div>
+<div id="rows"></div>
+</div>
+<div class="note">Tap a cell to toggle a button for that frame. Changes are used during the next playback.</div>
+<hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+<h2>Hold a button across a frame range</h2>
+<div class="range-controls">
+<label>From frame <input id="rangeStart" type="number" min="0" value="0" inputmode="numeric"></label>
+<label>Through frame <input id="rangeEnd" type="number" min="0" value="30" inputmode="numeric"></label>
+<label>Button <select id="rangeButton"><option value="LEFT">Left</option><option value="RIGHT">Right</option><option value="DOWN">Down</option><option value="UP">Up</option><option value="B">B</option><option value="A">A</option><option value="SELECT">Select</option><option value="START">Start</option></select></label>
+</div>
+<div class="controls" style="margin-top:8px"><button id="applyRange" class="primary">Hold button for range</button><button id="clearRange">Clear button for range</button></div>
+<div class="note">The selected button is held on every frame from the start frame through the end frame, inclusive.</div>
+</section>
+
+<section class="panel recording-panel">
+<h2>Frame-Accurate Recording · MP4 Export</h2>
+<div class="range-controls">
+<label>End frame (exclusive) <input id="recordEnd" type="number" min="1" value="600" inputmode="numeric"></label>
+<label>Output FPS <select id="recordFps"><option value="60" selected>60 FPS</option><option value="30">30 FPS</option><option value="24">24 FPS</option></select></label>
+</div>
+<div class="controls" style="margin-top:9px"><button id="recordMp4" class="primary">● Record from Frame 0 & Export MP4</button><button id="cancelRecord" disabled>Cancel recording</button></div>
+<progress id="recordProgress" value="0" max="100" style="width:100%;height:12px;margin-top:10px"></progress>
+<div id="recordStatus" class="note">Offline frame capture: emulates frames as quickly as encoding allows. MP4 export requires a browser with WebCodecs support and an internet connection to load the encoder library.</div>
+</section>
+<section class="panel ram-panel">
+<h2>RAM Watcher · CPU RAM</h2>
+<div class="note" style="margin:0 0 10px">Watches NES CPU RAM ($0000–$07FF). Values update when advancing frames and during playback.</div>
+<div class="controls" style="margin-bottom:10px">
+<label style="display:grid;gap:4px;font-size:12px;color:var(--muted)">RAM address (hex)<input id="watchAddress" value="0002" maxlength="4" inputmode="text" autocapitalize="characters" style="width:100px;min-height:40px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:8px"></label>
+<button id="addWatch" class="primary" style="align-self:end">+ Watch address</button>
+<button id="commonWatch" style="align-self:end">Common addresses</button>
+</div>
+<div id="watchList" style="display:grid;gap:6px"></div>
+<div class="note">Note: The meaning of a RAM address depends on the game. This panel shows raw values, not automatically identified variables.</div>
+</section>
+<section class="panel">
+<h2>Status & Notes</h2><div id="message" class="footer">Load a ROM file to get started.</div>
+<div class="note">Frame Advance calls JSNES frame() exactly once. TAS reproducibility must be tested per game; not every NES ROM or mapper is supported.</div>
+</section>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const canvas=$('screen'), ctx=canvas.getContext('2d',{alpha:false});
+  const image=ctx.createImageData(256,240);
+  const names=['LEFT','RIGHT','DOWN','UP','B','A','SELECT','START'];
+  const labels=['←','→','↓','↑','B','A','Sel','Start'];
+  let nes=null, romBytes=null, romName='', romLoaded=false, playing=false, timer=null;
+  let currentFrame=0,totalFrames=180,savedState=null,savedStateFrame=0,swapRB=false,recording=false,recordCancel=false;
+  const inputs=new Map(), watchedAddresses=[0x0002,0x0003,0x0004];
+  function message(s){$('message').textContent=s}
+  function engineStatus(s,good=true){$('engineStatus').textContent=s;$('engineStatus').className=good?'status-good':'status-bad'}
+  function updateFrame(){ $('frameLabel').textContent='Frame '+currentFrame; if(document.activeElement!==$('jumpFrame')) $('jumpFrame').value=currentFrame; renderRamWatch(); }
+  function renderFrame(buf){
+    // JSNES v2 liefert ARGB-Integer. ImageData erwartet RGBA-Bytes.
+    // Manche Builds/Browserpfade wirken R/B-vertauscht; der Umschalter muss
+    // deshalb tatsächlich den Pixel-Renderer beeinflussen.
+    for(let i=0;i<buf.length;i++){
+      const p=buf[i]>>>0,j=i*4;
+      const r=(p>>>16)&255, g=(p>>>8)&255, b=p&255;
+      image.data[j]=swapRB?b:r;
+      image.data[j+1]=g;
+      image.data[j+2]=swapRB?r:b;
+      image.data[j+3]=255;
+    }
+    ctx.putImageData(image,0,0);
+  }
+  function initNES(){
+    if(!window.jsnes || !window.jsnes.NES) throw new Error('Could not load JSNES. Check your internet connection/CDN.');
+    nes=new jsnes.NES({onFrame:renderFrame,emulateSound:false,onStatusUpdate:s=>engineStatus(s,true)});
+  }
+  function setFor(f){if(!inputs.has(f))inputs.set(f,new Set());return inputs.get(f)}
+  function applyFrameInput(f){
+    const active=setFor(f);
+    names.forEach(n=>{
+      const key='BUTTON_'+n, code=jsnes.Controller[key];
+      if(active.has(n))nes.buttonDown(1,code);else nes.buttonUp(1,code);
+    });
+  }
+  function oneFrame(){
+    if(!romLoaded||playing)return;
+    applyFrameInput(currentFrame);nes.frame();currentFrame++;updateFrame();renderRows();
+  }
+  function stop(){playing=false;if(timer)clearTimeout(timer);timer=null;$('play').textContent='▶ Play'}
+  function tick(){
+    if(!playing||!romLoaded)return;
+    applyFrameInput(currentFrame);nes.frame();currentFrame++;updateFrame();
+    renderRamWatch();
+    if(currentFrame%5===0)renderRows();
+    timer=setTimeout(tick,1000/60);
+  }
+  function togglePlay(){
+    if(!romLoaded){message('Please load a .nes ROM first.');return}
+    if(playing){stop();return}
+    playing=true;$('play').textContent='⏸ Pause';tick();
+  }
+  function seekTo(f){
+    if(!romLoaded){currentFrame=f;updateFrame();renderRows();return}
+    if(f===currentFrame)return;
+    if(f<currentFrame){
+      if(savedState && f>=savedStateFrame){
+        nes.fromJSON(savedState);currentFrame=savedStateFrame;
+      }else{
+        nes.reloadROM();currentFrame=0;
+      }
+    }
+    while(currentFrame<f){applyFrameInput(currentFrame);nes.frame();currentFrame++}
+    updateFrame();renderRows();
+  }
+  function readRam(address){
+    // JSNES exposes CPU memory as nes.cpu.mem in the v2 API implementation.
+    try {
+      const mem=nes && nes.cpu && nes.cpu.mem;
+      if(!mem) return null;
+      return Number(mem[address & 0xFFFF]) & 255;
+    } catch(_){ return null; }
+  }
+  function renderRamWatch(){
+    const host=$('watchList'); if(!host)return; host.replaceChildren();
+    watchedAddresses.forEach(addr=>{
+      const row=document.createElement('div');row.className='ram-row';
+      const a=document.createElement('span');a.className='ram-address';a.textContent='$'+addr.toString(16).toUpperCase().padStart(4,'0');
+      const v=document.createElement('span');v.className='ram-value';
+      const value=romLoaded?readRam(addr):null;
+      v.textContent=value===null?'—':'0x'+value.toString(16).toUpperCase().padStart(2,'0');
+      const dec=document.createElement('span');dec.className='ram-dec';dec.textContent=value===null?'unavailable':'dec. '+value;
+      const rm=document.createElement('button');rm.className='ram-remove';rm.textContent='×';rm.title='Remove address';rm.addEventListener('click',()=>{const i=watchedAddresses.indexOf(addr);if(i>=0)watchedAddresses.splice(i,1);renderRamWatch()});
+      row.append(a,v,dec,rm);host.appendChild(row);
+    });
+    if(!watchedAddresses.length){const empty=document.createElement('div');empty.className='note';empty.textContent='No addresses yet. Add a RAM address above.';host.appendChild(empty)}
+  }
+  function addWatchAddress(value){
+    const raw=String(value).trim().replace(/^\$/,'').replace(/^0x/i,'');
+    if(!/^[0-9a-f]{1,4}$/i.test(raw)){message('Enter a hexadecimal address, e.g. 0002.');return}
+    const addr=parseInt(raw,16);
+    if(addr>0x07ff){message('Enter a CPU RAM address between $0000 and $07FF.');return}
+    if(!watchedAddresses.includes(addr))watchedAddresses.push(addr);
+    renderRamWatch();message('Watching RAM address $'+addr.toString(16).toUpperCase().padStart(4,'0')+' wird beobachtet.');
+  }
+  function renderRows(){
+    const rows=$('rows');rows.replaceChildren();
+    const start=Math.max(0,currentFrame-12),end=Math.max(totalFrames,currentFrame+36);
+    const frag=document.createDocumentFragment();
+    for(let f=start;f<end;f++){
+      const row=document.createElement('div');row.className='frame-row'+(f===currentFrame?' current':'');
+      const num=document.createElement('button');num.className='frame-num';num.textContent=f;num.title='Jump to frame '+f+' springen';
+      num.addEventListener('click',()=>{stop();seekTo(f)});
+      row.appendChild(num);
+      names.forEach((n,i)=>{
+        const cell=document.createElement('button');cell.className='cell'+(setFor(f).has(n)?' on':'');
+        cell.setAttribute('aria-label','Frame '+f+', '+labels[i]);cell.title='Frame '+f+' · '+labels[i];
+        cell.addEventListener('click',()=>{
+          const set=setFor(f);if(set.has(n))set.delete(n);else set.add(n);
+          // Only the input plan changes; the emulator state changes on playback/seek.
+          renderRows();
+        });
+        row.appendChild(cell);
+      });
+      frag.appendChild(row);
+    }
+    rows.appendChild(frag);
+  }
+  $('romFile').addEventListener('change',async e=>{
+    const file=e.target.files&&e.target.files[0];if(!file)return;stop();
+    try{
+      romBytes=new Uint8Array(await file.arrayBuffer());romName=file.name;
+      initNES();nes.loadROM(romBytes);romLoaded=true;currentFrame=0;savedState=null;inputs.clear();totalFrames=180;
+      engineStatus('Emulator ready · '+romName,true);message('ROM loaded. Use +1 Frame or Play.');updateFrame();renderRows();
+    }catch(err){romLoaded=false;engineStatus('Load error',false);message(err.message||String(err))}
+  });
+  $('next').addEventListener('click',oneFrame);
+  $('prev').addEventListener('click',()=>{if(!romLoaded)return;stop();seekTo(Math.max(0,currentFrame-1))});
+  $('next10').addEventListener('click',()=>{if(!romLoaded)return;stop();seekTo(currentFrame+10)});
+  $('prev10').addEventListener('click',()=>{if(!romLoaded)return;stop();seekTo(Math.max(0,currentFrame-10))});
+  $('jumpButton').addEventListener('click',()=>{
+    const target=Number($('jumpFrame').value);
+    if(!Number.isInteger(target)||target<0){message('Enter a valid frame number (0 or greater).');return}
+    stop();seekTo(target);totalFrames=Math.max(totalFrames,target+1);renderRows();message('Jumped to frame '+target+'.');
+  });
+  $('jumpFrame').addEventListener('keydown',e=>{if(e.key==='Enter')$('jumpButton').click()});
+  function editRange(clear=false){
+    stop();
+    const start=Number($('rangeStart').value),end=Number($('rangeEnd').value),button=$('rangeButton').value;
+    if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end<start){message('Enter a valid range: start must be 0 or greater and end must be at least the start.');return}
+    for(let f=start;f<=end;f++){const set=setFor(f);if(clear)set.delete(button);else set.add(button)}
+    totalFrames=Math.max(totalFrames,end+1);renderRows();message((clear?'Cleared ':'Set hold for ')+button+' on frames '+start+'–'+end+'.');
+  }
+  $('applyRange').addEventListener('click',()=>editRange(false));
+  $('clearRange').addEventListener('click',()=>editRange(true));
+  $('play').addEventListener('click',togglePlay);
+  $('reset').addEventListener('click',()=>{
+    if(!romLoaded)return;stop();nes.reloadROM();currentFrame=0;savedState=null;updateFrame();renderRows();message('Game reset.');
+  });
+  $('saveState').addEventListener('click',()=>{
+    if(!romLoaded){message('Load a ROM first.');return}
+    try{savedState=nes.toJSON();savedStateFrame=currentFrame;message('Save state stored in memory at frame '+savedStateFrame+'. It will be lost when you reload the page.')}
+    catch(err){message('Save state failed: '+err.message)}
+  });
+  $('loadState').addEventListener('click',()=>{
+    if(!romLoaded||!savedState){message('No save state has been stored yet.');return}
+    try{stop();nes.fromJSON(savedState);currentFrame=savedStateFrame;updateFrame();renderRows();message('Loaded save state at frame '+currentFrame)}
+    catch(err){message('Could not load save state: '+err.message)}
+  });
+  $('replay').addEventListener('click',()=>{
+    if(!romLoaded){message('Load a ROM first.');return}
+    stop();nes.reloadROM();currentFrame=0;updateFrame();message('TAS playback started from frame 0.');togglePlay();
+  });
+  $('colorMode').addEventListener('click',()=>{
+    swapRB=!swapRB;$('colorMode').textContent=swapRB?'Colors: Red/Blue swapped':'Colors: Standard';
+    if(romLoaded){nes.frame();} // redraw a fresh frame using the selected channel mapping
+  });
+  async function recordAndExportMp4(){
+    if(!romLoaded){message('Load a ROM before recording.');return}
+    if(recording)return;
+    const endFrame=Number($('recordEnd').value),fps=Number($('recordFps').value);
+    if(!Number.isInteger(endFrame)||endFrame<1||endFrame>30000){message('Choose an end frame from 1 to 30000.');return}
+    if(!('VideoEncoder' in window)||!('VideoFrame' in window)){
+      $('recordStatus').textContent='This browser does not support WebCodecs, which is required for MP4 export here. Try a recent Chrome version on desktop.';
+      message('MP4 export unavailable: this browser does not support WebCodecs.');return;
+    }
+    recording=true;recordCancel=false;stop();
+    ['prev','prev10','play','next','next10','reset','jumpButton','saveState','loadState','replay','applyRange','clearRange','addRows','saveTas','colorMode'].forEach(id=>$(id).disabled=true);
+    $('recordMp4').disabled=true;$('cancelRecord').disabled=false;$('recordProgress').value=0;
+    $('recordStatus').textContent='Loading MP4 encoder…';
+    let encoder=null,muxer=null;
+    try{
+      const {Muxer,ArrayBufferTarget}=await import('https://esm.sh/mp4-muxer@5.2.2');
+      if(recordCancel)throw new Error('Recording cancelled.');
+      muxer=new Muxer({target:new ArrayBufferTarget(),video:{codec:'avc',width:256,height:240,frameRate:fps},fastStart:'in-memory'});
+      encoder=new VideoEncoder({output:(chunk,meta)=>muxer.addVideoChunk(chunk,meta),error:err=>{console.error(err)}});
+      encoder.configure({codec:'avc1.42001f',width:256,height:240,bitrate:2000000,framerate:fps,latencyMode:'quality'});
+      nes.reloadROM();currentFrame=0;updateFrame();renderRows();
+      $('recordStatus').textContent='Recording frame 0…';
+      const frameDuration=Math.round(1000000/fps);
+      for(let f=0;f<endFrame;f++){
+        if(recordCancel)throw new Error('Recording cancelled.');
+        applyFrameInput(f);nes.frame();currentFrame=f+1;
+        const vf=new VideoFrame(canvas,{timestamp:f*frameDuration,duration:frameDuration});
+        encoder.encode(vf,{keyFrame:f===0||f%fps===0});vf.close();
+        while(encoder.encodeQueueSize>6){await new Promise(resolve=>setTimeout(resolve,10));if(recordCancel)throw new Error('Recording cancelled.');}
+        if(f%10===0||f===endFrame-1){const pct=Math.floor((f+1)/endFrame*100);$('recordProgress').value=pct;$('recordStatus').textContent=`Encoding frames: ${f+1} / ${endFrame} (${pct}%)`;updateFrame();await new Promise(resolve=>setTimeout(resolve,0));}
+      }
+      await encoder.flush();encoder.close();encoder=null;muxer.finalize();
+      const blob=new Blob([muxer.target.buffer],{type:'video/mp4'});
+      const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=(romName?romName.replace(/\.nes$/i,''):'nes')+'-tas.mp4';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+      $('recordProgress').value=100;$('recordStatus').textContent=`MP4 ready: ${endFrame} frames at ${fps} FPS. Audio is not included.`;message('MP4 export complete.');updateFrame();renderRows();
+    }catch(err){if(encoder){try{encoder.close()}catch(_){}}$('recordStatus').textContent='Export failed: '+(err&&err.message?err.message:String(err));message('MP4 export failed: '+(err&&err.message?err.message:String(err)));}
+    finally{recording=false;['prev','prev10','play','next','next10','reset','jumpButton','saveState','loadState','replay','applyRange','clearRange','addRows','saveTas','colorMode'].forEach(id=>$(id).disabled=false);$('recordMp4').disabled=false;$('cancelRecord').disabled=true;}
+  }
+  $('recordMp4').addEventListener('click',recordAndExportMp4);
+  $('cancelRecord').addEventListener('click',()=>{recordCancel=true;$('recordStatus').textContent='Cancelling after the current encoding step…'});
+  $('addWatch').addEventListener('click',()=>addWatchAddress($('watchAddress').value));
+  $('watchAddress').addEventListener('keydown',e=>{if(e.key==='Enter')addWatchAddress($('watchAddress').value)});
+  $('commonWatch').addEventListener('click',()=>{[0x0000,0x0001,0x0002,0x0003,0x0004,0x0005].forEach(a=>{if(!watchedAddresses.includes(a))watchedAddresses.push(a)});renderRamWatch();message('Added common addresses $0000–$0005.')});
+  $('addRows').addEventListener('click',()=>{totalFrames+=60;renderRows()});
+  $('saveTas').addEventListener('click',()=>{
+    const data={format:'nes-tas-v2',romName,frame:currentFrame,totalFrames,inputs:Object.fromEntries([...inputs].map(([f,s])=>[f,[...s]]))};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
+    const a=document.createElement('a');a.href=url;a.download=(romName?romName.replace(/\.nes$/i,''):'nes')+'.tas.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  });
+  $('tasFile').addEventListener('change',async e=>{
+    const file=e.target.files&&e.target.files[0];if(!file)return;
+    try{
+      const data=JSON.parse(await file.text());if(!data.inputs||typeof data.inputs!=='object')throw new Error('Invalid TAS JSON');
+      inputs.clear();for(const [f,bs] of Object.entries(data.inputs))inputs.set(Number(f),new Set(bs));
+      totalFrames=Math.max(Number(data.totalFrames)||180,...[...inputs.keys()].map(f=>f+1));
+      stop();if(romLoaded){nes.reloadROM();currentFrame=0;savedState=null}
+      updateFrame();renderRows();message('TAS inputs imported. Load the matching ROM and start playback.');
+    }catch(err){message('TAS import failed: '+err.message)}
+  });
+  if(window.jsnes&&window.jsnes.NES)engineStatus('JSNES loaded · ready for ROM',true);
+  else engineStatus('Could not load JSNES',false);
+  renderRows();renderRamWatch();
+})();
+</script>
+</body></html>
