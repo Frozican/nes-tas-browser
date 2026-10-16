@@ -2,15 +2,15 @@
 
 **A browser-based NES emulator and Tool-Assisted Speedrun (TAS) editor.**
 
-Play NES games, edit controller inputs frame by frame, build precise TAS sequences, inspect memory, and experiment with high-speed gameplay recording — all through a web interface.
+Play NES games, edit controller inputs frame by frame, build precise TAS sequences, inspect memory, and export high-speed gameplay recordings with synchronized audio — all through a web interface.
 
 <p align="center">
   <a href="https://frozican.github.io/nes-tas-browser/"><strong>🚀 Play NES TAS Browser</strong></a>
 </p>
 
-> **Current version: v0.7 — Experimental**
+> **Current version: v0.8 — Experimental**
 >
-> Some features, especially MP4 export, may have browser-specific limitations and have not been tested across all devices.
+> MP4 export now includes game audio. Audio synchronization and exported video duration have been tested successfully in the current setup, but browser and device compatibility may still vary.
 
 ## ✨ Features
 
@@ -23,7 +23,9 @@ Play NES games, edit controller inputs frame by frame, build precise TAS sequenc
 - ▶️ **Playback Controls** — Play, pause, step through frames, and reset gameplay.
 - 💾 **Save States** — Save and restore emulator state where supported.
 - 🧠 **RAM Watcher** — Monitor selected NES memory addresses.
-- 🎥 **Experimental Recording** — Process gameplay from frame 0 and attempt MP4 export.
+- 🎥 **Fast Recording** — Process gameplay from frame 0 faster than real-time playback.
+- 🔊 **Audio in MP4 Export** — Export gameplay video with captured game audio.
+- 🎬 **Synchronized MP4 Output** — Audio synchronization and the resulting video duration have been tested successfully.
 - 📱 **Mobile-Friendly UI** — Designed for desktop and mobile browsers.
 - 🌐 **Browser-Based** — No traditional desktop installation required.
 
@@ -64,34 +66,36 @@ Depending on the browser and the features being used, opening the file directly 
 | Save State | Save the current emulator state, where supported |
 | Load State | Restore a saved emulator state, where supported |
 | RAM Watcher | Inspect selected memory addresses |
-| Record / Export | Experiment with frame-based recording and MP4 export |
+| Record / Export | Render gameplay frames and export an MP4 with captured audio |
 
 The exact controls and availability depend on the current application version.
 
 ## 🎥 Recording and MP4 Export
 
-The experimental recording feature is designed to:
+The recording feature is designed to:
 
 1. Start emulation from frame 0.
 2. Process gameplay frames without waiting for real-time playback.
-3. Capture the rendered frames.
-4. Encode the captured frames into an MP4 video, where supported.
+3. Capture the rendered frames and game audio.
+4. Encode the recording as an MP4 video with audio, where supported.
+
+Audio is included in the current export workflow. In testing, the exported audio stayed synchronized with the video and the exported duration was correct.
 
 ### Current limitations
 
 - Browser and encoder compatibility may vary.
 - Long recordings can consume substantial memory.
-- Audio recording is not currently supported.
 - Recording performance depends on the device and the emulation workload.
-- MP4 export has not been verified across all browsers and devices.
+- Audio capture and MP4 encoding may behave differently across browsers and devices.
+- TAS accuracy and deterministic playback have not been independently verified for every game.
 
-**Recommendation:** Start with a short recording before attempting a long TAS.
+**Recommendation:** Start with a short recording before attempting a long TAS, especially on mobile devices.
 
 ## 🧠 ROM Compatibility
 
 The emulator uses JSNES for NES emulation. Compatibility depends on the emulator core, supported mapper hardware, ROM format, and browser environment.
 
-Some games may not work correctly, especially those that require specialized cartridge hardware or mapper support.
+Some games may not work correctly, especially those that require specialized cartridge hardware or mapper support. For example, games using uncommon mapper hardware may fail to load or behave incorrectly.
 
 If a game fails to load, please report the game, ROM region, browser, and any error message. Do not upload copyrighted ROM files to an issue.
 
@@ -109,7 +113,7 @@ Never upload ROM files or other copyrighted material to the repository without t
 - CSS
 - JavaScript
 - [JSNES](https://github.com/bfirsh/jsnes)
-- Browser APIs for rendering, input, and media processing
+- Browser APIs for rendering, input, audio, and media processing
 
 See the respective dependency repositories for their source code and license terms.
 
