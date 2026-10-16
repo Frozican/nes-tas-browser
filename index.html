@@ -86,7 +86,7 @@ button.primary{background:var(--blue);border-color:var(--blue);color:white}butto
 </div>
 <div class="controls" style="margin-top:9px"><button id="recordMp4" class="primary">● Record from Frame 0 & Export MP4</button><button id="cancelRecord" disabled>Cancel recording</button></div>
 <progress id="recordProgress" value="0" max="100" style="width:100%;height:12px;margin-top:10px"></progress>
-<div id="recordStatus" class="note">Offline frame capture: emulates frames as quickly as encoding allows. MP4 export requires a browser with WebCodecs support and an internet connection to load the encoder library.</div>
+<div id="recordStatus" class="note">Offline frame capture with emulator audio samples. MP4 export requires browser WebCodecs support, AAC encoding, and an internet connection to load the encoder library.</div>
 </section>
 <section class="panel ram-panel">
 <h2>RAM Watcher · CPU RAM</h2>
@@ -112,7 +112,7 @@ button.primary{background:var(--blue);border-color:var(--blue);color:white}butto
   const names=['LEFT','RIGHT','DOWN','UP','B','A','SELECT','START'];
   const labels=['←','→','↓','↑','B','A','Sel','Start'];
   let nes=null, romBytes=null, romName='', romLoaded=false, playing=false, timer=null;
-  let currentFrame=0,totalFrames=180,savedState=null,savedStateFrame=0,swapRB=false,recording=false,recordCancel=false;
+  let currentFrame=0,totalFrames=180,savedState=null,savedStateFrame=0,swapRB=false,recording=false,recordCancel=false,recordAudioSamples=[];
   const inputs=new Map(), watchedAddresses=[0x0002,0x0003,0x0004];
   function message(s){$('message').textContent=s}
   function engineStatus(s,good=true){$('engineStatus').textContent=s;$('engineStatus').className=good?'status-good':'status-bad'}
@@ -133,7 +133,7 @@ button.primary{background:var(--blue);border-color:var(--blue);color:white}butto
   }
   function initNES(){
     if(!window.jsnes || !window.jsnes.NES) throw new Error('Could not load JSNES. Check your internet connection/CDN.');
-    nes=new jsnes.NES({onFrame:renderFrame,emulateSound:false,onStatusUpdate:s=>engineStatus(s,true)});
+    nes=new jsnes.NES({onFrame:renderFrame,emulateSound:true,sampleRate:48000,onAudioSample:(left,right)=>{if(recording)recordAudioSamples.push(left,right);},onStatusUpdate:s=>engineStatus(s,true)});
   }
   function setFor(f){if(!inputs.has(f))inputs.set(f,new Set());return inputs.get(f)}
   function applyFrameInput(f){
@@ -280,20 +280,25 @@ button.primary{background:var(--blue);border-color:var(--blue);color:white}butto
     if(recording)return;
     const endFrame=Number($('recordEnd').value),fps=Number($('recordFps').value);
     if(!Number.isInteger(endFrame)||endFrame<1||endFrame>30000){message('Choose an end frame from 1 to 30000.');return}
-    if(!('VideoEncoder' in window)||!('VideoFrame' in window)){
-      $('recordStatus').textContent='This browser does not support WebCodecs, which is required for MP4 export here. Try a recent Chrome version on desktop.';
-      message('MP4 export unavailable: this browser does not support WebCodecs.');return;
+    if(!('VideoEncoder' in window)||!('VideoFrame' in window)||!('AudioEncoder' in window)||!('AudioData' in window)){
+      $('recordStatus').textContent='This browser does not support the video and audio WebCodecs needed for MP4 export. Try an up-to-date Chrome browser.';
+      message('MP4 export unavailable: video/audio WebCodecs are not supported.');return;
     }
-    recording=true;recordCancel=false;stop();
+    recording=true;recordCancel=false;recordAudioSamples=[];stop();
     ['prev','prev10','play','next','next10','reset','jumpButton','saveState','loadState','replay','applyRange','clearRange','addRows','saveTas','colorMode'].forEach(id=>$(id).disabled=true);
     $('recordMp4').disabled=true;$('cancelRecord').disabled=false;$('recordProgress').value=0;
     $('recordStatus').textContent='Loading MP4 encoder…';
-    let encoder=null,muxer=null;
+    let encoder=null,audioEncoder=null,muxer=null;
     try{
       const {Muxer,ArrayBufferTarget}=await import('https://esm.sh/mp4-muxer@5.2.2');
       if(recordCancel)throw new Error('Recording cancelled.');
-      muxer=new Muxer({target:new ArrayBufferTarget(),video:{codec:'avc',width:256,height:240,frameRate:fps},fastStart:'in-memory'});
+      muxer=new Muxer({target:new ArrayBufferTarget(),video:{codec:'avc',width:256,height:240,frameRate:fps},audio:{codec:'aac',sampleRate:48000,numberOfChannels:2},fastStart:'in-memory'});
       encoder=new VideoEncoder({output:(chunk,meta)=>muxer.addVideoChunk(chunk,meta),error:err=>{console.error(err)}});
+      audioEncoder=new AudioEncoder({output:(chunk,meta)=>muxer.addAudioChunk(chunk,meta),error:err=>{console.error(err)}});
+      const audioConfig={codec:'mp4a.40.2',sampleRate:48000,numberOfChannels:2,bitrate:128000};
+      const audioSupport=await AudioEncoder.isConfigSupported(audioConfig);
+      if(!audioSupport.supported)throw new Error('AAC audio encoding is not supported in this browser.');
+      audioEncoder.configure(audioConfig);
       encoder.configure({codec:'avc1.42001f',width:256,height:240,bitrate:2000000,framerate:fps,latencyMode:'quality'});
       nes.reloadROM();currentFrame=0;updateFrame();renderRows();
       $('recordStatus').textContent='Recording frame 0…';
@@ -306,11 +311,24 @@ button.primary{background:var(--blue);border-color:var(--blue);color:white}butto
         while(encoder.encodeQueueSize>6){await new Promise(resolve=>setTimeout(resolve,10));if(recordCancel)throw new Error('Recording cancelled.');}
         if(f%10===0||f===endFrame-1){const pct=Math.floor((f+1)/endFrame*100);$('recordProgress').value=pct;$('recordStatus').textContent=`Encoding frames: ${f+1} / ${endFrame} (${pct}%)`;updateFrame();await new Promise(resolve=>setTimeout(resolve,0));}
       }
-      await encoder.flush();encoder.close();encoder=null;muxer.finalize();
+      await encoder.flush();encoder.close();encoder=null;
+      $('recordStatus').textContent='Encoding audio…';
+      const samplesPerChunk=1024, totalSamples=Math.floor(recordAudioSamples.length/2);
+      for(let start=0;start<totalSamples;start+=samplesPerChunk){
+        if(recordCancel)throw new Error('Recording cancelled.');
+        const count=Math.min(samplesPerChunk,totalSamples-start);
+        if(count<samplesPerChunk)break;
+        const pcm=new Float32Array(count*2);
+        for(let i=0;i<count*2;i++)pcm[i]=Math.max(-1,Math.min(1,recordAudioSamples[start*2+i]||0));
+        const audioData=new AudioData({format:'f32',sampleRate:48000,numberOfFrames:count,numberOfChannels:2,timestamp:Math.round(start/48000*1000000),data:pcm});
+        audioEncoder.encode(audioData);audioData.close();
+        while(audioEncoder.encodeQueueSize>8){await new Promise(resolve=>setTimeout(resolve,5));if(recordCancel)throw new Error('Recording cancelled.');}
+      }
+      await audioEncoder.flush();audioEncoder.close();audioEncoder=null;recordAudioSamples=[];muxer.finalize();
       const blob=new Blob([muxer.target.buffer],{type:'video/mp4'});
       const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=(romName?romName.replace(/\.nes$/i,''):'nes')+'-tas.mp4';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-      $('recordProgress').value=100;$('recordStatus').textContent=`MP4 ready: ${endFrame} frames at ${fps} FPS. Audio is not included.`;message('MP4 export complete.');updateFrame();renderRows();
-    }catch(err){if(encoder){try{encoder.close()}catch(_){}}$('recordStatus').textContent='Export failed: '+(err&&err.message?err.message:String(err));message('MP4 export failed: '+(err&&err.message?err.message:String(err)));}
+      $('recordProgress').value=100;$('recordStatus').textContent=`MP4 ready: ${endFrame} frames at ${fps} FPS, with emulator audio.`;message('MP4 export complete.');updateFrame();renderRows();
+    }catch(err){if(encoder){try{encoder.close()}catch(_){}}if(audioEncoder){try{audioEncoder.close()}catch(_){}}recordAudioSamples=[];$('recordStatus').textContent='Export failed: '+(err&&err.message?err.message:String(err));message('MP4 export failed: '+(err&&err.message?err.message:String(err)));}
     finally{recording=false;['prev','prev10','play','next','next10','reset','jumpButton','saveState','loadState','replay','applyRange','clearRange','addRows','saveTas','colorMode'].forEach(id=>$(id).disabled=false);$('recordMp4').disabled=false;$('cancelRecord').disabled=true;}
   }
   $('recordMp4').addEventListener('click',recordAndExportMp4);
